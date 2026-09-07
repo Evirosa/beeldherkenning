@@ -402,7 +402,7 @@ def main():
 
             break
 
-    # Camera netjes afsluiten
+    # Camera netjes afsluiten toch even anders 
     camera.release()
     cv.destroyAllWindows()
 
