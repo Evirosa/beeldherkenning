@@ -1,0 +1,33 @@
+import numpy as np 
+import cv2
+import os
+
+ # Def isoleer_koekje(foto, debug=False)
+foto = cv2.imread('stroopwafel_0005.jpg')
+lab_afbeelding= cv2.cvtColor(foto, cv2.COLOR_BGR2LAB)
+l_kanaal, a_kanaal, b_kanaal = cv2.split(lab_afbeelding)
+l_blur = cv2.GaussianBlur(l_kanaal, (5, 5), 0)
+_, masker = cv2.threshold(l_blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+kernel = np.ones((7, 7), np.uint8)
+masker_open = cv2.morphologyEx(masker, cv2.MORPH_OPEN, kernel, iterations=2)
+masker_close = cv2.morphologyEx(masker_open, cv2.MORPH_CLOSE, kernel, iterations=2)
+contouren, _ = cv2.findContours(masker_close, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+schoon_masker = np.zeros_like(masker_close)
+grootste_contour = max(contouren, key=cv2.contourArea)
+cv2.drawContours(schoon_masker, [grootste_contour], -1, 255, thickness=cv2.FILLED)
+resultaat = cv2.bitwise_and(foto, foto, mask=schoon_masker)
+#cv2.imwrite('foto_in_lab.jpg', lab_afbeelding)
+cv2.imshow('1. Originele Foto', foto)
+cv2.imshow('2. Foto met LAB Filter', lab_afbeelding)
+cv2.imshow('3. L-kanaal geblurd', l_blur)
+cv2.imshow('4. Otsu masker', masker)
+cv2.imshow('5. na opening', masker_open)
+cv2.imshow('6. na closing', masker_close)
+cv2.imshow('7. foto met contour', schoon_masker)
+cv2.imshow('8. eindresultaat', resultaat)
+
+
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+

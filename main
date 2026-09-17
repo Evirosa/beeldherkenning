@@ -1,0 +1,161 @@
+"""
+main.py
+Hoofdprogramma voor het herkennen van koekjes op basis van kleur (HSV),
+vorm (contouren) en grootte (contouren).
+
+Verwerkingsstappen per foto:
+1. Koekje scheiden van achtergrond        -> segmentatie.py
+2. Dat ruwe masker ontdoen van ruis       -> morfologie.py
+3. Grootste contour zoeken + vorm/grootte -> contouren.py
+4. Dominante kleur bepalen, maar ALLEEN
+   binnen de gevonden contour             -> hsv.py
+5. Type koekje bepalen via if-else boom   -> deze module
+
+Belangrijk: de kleurherkenning gebeurt pas nadat het koekje is
+gelokaliseerd, en alleen binnen zijn contour. Zo telt de (witte)
+achtergrond niet meer mee, wat eerder het probleem was.
+
+Zet je fotos in de map die in INVOERMAP staat gedefinieerd.
+"""
+
+import os
+import cv2
+import numpy as np
+
+from segmentatie import maak_voorgrondmasker
+from morfologie import filter_ruis
+from contour import vind_grootste_contour, bepaal_vorm, bepaal_grootte
+from hsv import herken_dominante_kleur
+
+INVOERMAP = "fotomap"
+
+# Grenswaarden voor grootte-classificatie in pixels.
+# Deze zijn afhankelijk van cameraopstelling/afstand/resolutie en
+# moeten dus gekalibreerd worden op de eigen opstelling.
+GRENS_KLEIN_MIDDEL = 5000
+GRENS_MIDDEL_GROOT = 15000
+
+
+def bepaal_grootteklasse(oppervlakte):
+    """Zet de gemeten oppervlakte om naar een klasse klein/middel/groot."""
+    if oppervlakte < GRENS_KLEIN_MIDDEL:
+        return "klein"
+    elif oppervlakte < GRENS_MIDDEL_GROOT:
+        return "middel"
+    else:
+        return "groot"
+
+
+def herken_koekje(kleur, vorm, grootteklasse):
+    """
+    Logische if-else boom die op basis van kleur, vorm en grootte
+    bepaalt om welk type koekje het gaat.
+
+    :param kleur: string, output van hsv.py
+    :param vorm: string, output van contouren.py
+    :param grootteklasse: string, "klein" / "middel" / "groot"
+    :return: naam van het herkende koekje (string)
+    """
+    if kleur == "bruin":
+        if vorm == "rond":
+            if grootteklasse == "klein":
+                return "Chocoladekoekje (klein, rond)"
+            elif grootteklasse == "middel":
+                return "Stroopwafel"
+            else:
+                return "Grote chocoladecookie"
+        elif vorm == "rechthoek":
+            return "Speculaas"
+        else:
+            return "Onbekend bruin koekje"
+
+    elif kleur == "geel":
+        if vorm == "rond":
+            return "Boterkoekje"
+        elif vorm == "vierkant":
+            return "Butterkoekje (vierkant)"
+        else:
+            return "Onbekend geel koekje"
+
+    elif kleur == "wit":
+        if vorm == "rond" and grootteklasse == "klein":
+            return "Suikerkoekje"
+        else:
+            return "Onbekend wit koekje"
+
+    else:
+        return "Kleur niet herkend"
+
+
+def verwerk_foto(pad_naar_foto):
+    """
+    Verwerkt één foto volledig: kleur, ruisfilter, contour, classificatie.
+
+    :param pad_naar_foto: volledig pad naar de afbeelding
+    :return: resultaatregel (string) met kleur, vorm, grootte en koekjenaam
+    """
+    afbeelding = cv2.imread(pad_naar_foto)
+
+    if afbeelding is None:
+        return f"FOUT: kan {pad_naar_foto} niet inlezen."
+
+    # Stap 1: koekje scheiden van de (witte) achtergrond
+    voorgrondmasker_ruw = maak_voorgrondmasker(afbeelding)
+
+    # Stap 2: ruisfilter met morfologie
+    voorgrondmasker = filter_ruis(voorgrondmasker_ruw)
+
+    # Stap 3: grootste contour zoeken (= het koekje), vorm en grootte bepalen
+    contour = vind_grootste_contour(voorgrondmasker)
+
+    if contour is None:
+        return f"{os.path.basename(pad_naar_foto)}: geen contour gevonden."
+
+    vorm = bepaal_vorm(contour)
+    oppervlakte = bepaal_grootte(contour)
+    grootteklasse = bepaal_grootteklasse(oppervlakte)
+
+    # Maak een masker dat ALLEEN de binnenkant van het koekje bevat,
+    # zodat de achtergrond straks niet meetelt bij de kleurherkenning
+    koekjemasker = np.zeros_like(voorgrondmasker)
+    cv2.drawContours(koekjemasker, [contour], -1, 255, thickness=cv2.FILLED)
+
+    # Stap 4: kleurherkenning, beperkt tot het gebied van het koekje
+    kleur, _ = herken_dominante_kleur(afbeelding, zoekmasker=koekjemasker)
+
+    if kleur is None:
+        return f"{os.path.basename(pad_naar_foto)}: geen bekende kleur gevonden binnen het koekje."
+
+    # Stap 5: classificatie via if-else boom
+    resultaat = herken_koekje(kleur, vorm, grootteklasse)
+
+    return (
+        f"{os.path.basename(pad_naar_foto)} -> "
+        f"kleur: {kleur}, vorm: {vorm}, grootte: {grootteklasse} "
+        f"({oppervlakte:.0f} px) => {resultaat}"
+    )
+
+
+def main():
+    """Loopt om de beurt over alle fotos in INVOERMAP en print het resultaat."""
+    if not os.path.isdir(INVOERMAP):
+        print(f"Map '{INVOERMAP}' bestaat niet. Maak deze aan en zet er fotos in.")
+        return
+
+    toegestane_extensies = (".jpg", ".jpeg", ".png", ".bmp")
+    bestanden = [
+        f for f in os.listdir(INVOERMAP) if f.lower().endswith(toegestane_extensies)
+    ]
+
+    if not bestanden:
+        print(f"Geen fotos gevonden in '{INVOERMAP}'.")
+        return
+
+    for bestandsnaam in bestanden:
+        volledig_pad = os.path.join(INVOERMAP, bestandsnaam)
+        resultaat = verwerk_foto(volledig_pad)
+        print(resultaat)
+
+
+if __name__ == "__main__":
+    main()

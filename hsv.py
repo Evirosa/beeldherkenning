@@ -1,64 +1,79 @@
-import cv2 as cv
+"""
+hsv.py
+Functiemodule voor kleurherkenning met behulp van de HSV-kleurruimte.
+
+HSV wordt gebruikt in plaats van RGB/BGR omdat de Hue-waarde (kleurtint)
+vrijwel onafhankelijk is van lichtintensiteit. Dit maakt kleurherkenning
+robuuster tegen schaduw en belichtingsverschillen.
+"""
+
+import cv2
 import numpy as np
 
-frame = cv.imread("koekje2.jpg")
-print(frame.shape)
-
-if frame is None:
-    print("Foto kon niet worden geladen")
-    exit()
-
-    # Convert BGR to HSV
-hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
-
-lower_red = np.array([0, 50, 50])
-upper_red = np.array([10, 255, 255])
-lower_yellow = np.array([12, 50, 50])
-upper_yellow = np.array([45, 255, 255])
-lower_green = np.array([40, 50, 50])
-upper_green = np.array([80, 255, 255])
-lower_blue = np.array([100, 50, 50])
-upper_blue = np.array([130, 255, 255])
-
-    # Threshold the HSV image to get only blue colors
-mask_red = cv.inRange(hsv, lower_red, upper_red)
-mask_yellow = cv.inRange(hsv, lower_yellow, upper_yellow)
-mask_green = cv.inRange(hsv, lower_green, upper_green)
-mask_blue = cv.inRange(hsv, lower_blue, upper_blue)
-
-    # Bitwise-AND mask and original image
-mask_all = cv.bitwise_or(mask_red, cv.bitwise_or(mask_yellow, cv.bitwise_or(mask_green, mask_blue)))
-res = cv.bitwise_and(frame, frame, mask=mask_all)
-drempel = 200
-
-kleuren = {
-"rood": mask_red,
-"geel": mask_yellow,
-"groen": mask_green,
-"blauw": mask_blue,
+# Kleurgrenzen in HSV-formaat (Hue: 0-179, Saturation: 0-255, Value: 0-255)
+# Deze grenzen zijn experimenteel bepaald en moeten evt. gekalibreerd
+# worden op de eigen camera/belichting.
+KLEURGRENZEN = {
+    "bruin": [(np.array([5, 50, 20]), np.array([20, 255, 200]))],
+    "geel": [(np.array([20, 100, 100]), np.array([35, 255, 255]))],
+    "wit": [(np.array([0, 0, 180]), np.array([180, 40, 255]))],
+    "rood": [
+        (np.array([0, 100, 100]), np.array([10, 255, 255])),
+        (np.array([170, 100, 100]), np.array([180, 255, 255])),
+    ],
 }
- 
-print("Resultaat kleurdetectie:")
-gevonden_kleuren = []
-for naam, mask in kleuren.items():
-    aantal_pixels = cv.countNonZero(mask)
-    aanwezig = aantal_pixels > drempel
-    print(f"  {naam}: {'JA' if aanwezig else 'nee'} ({aantal_pixels} pixels)")
-    if aanwezig:
-        gevonden_kleuren.append(naam)
- 
-if gevonden_kleuren:
-    print("\nDe foto bevat: " + ", ".join(gevonden_kleuren))
-else:
-    print("\nGeen van de gezochte kleuren gevonden.")
- 
-# --- Vensters tonen tot ESC wordt ingedrukt ---
-while True:
-    cv.imshow('frame', frame)
-    cv.imshow('mask', mask_all)
-    cv.imshow('res', res)
-    k = cv.waitKey(5) & 0xFF
-    if k == 27:  # ESC
-        break
- 
-cv.destroyAllWindows()
+
+
+def bepaal_kleurmasker(hsv_afbeelding, kleurnaam):
+    """
+    Maakt een binair masker voor een gegeven kleurnaam.
+
+    :param hsv_afbeelding: afbeelding in HSV-kleurruimte (numpy array)
+    :param kleurnaam: sleutel uit KLEURGRENZEN
+    :return: binair masker (numpy array, waarden 0 of 255)
+    """
+    if kleurnaam not in KLEURGRENZEN:
+        raise ValueError(f"Onbekende kleurnaam: {kleurnaam}")
+
+    masker_totaal = np.zeros(hsv_afbeelding.shape[:2], dtype=np.uint8)
+
+    # Sommige kleuren (zoals rood) liggen op twee plekken op de Hue-cirkel,
+    # daarom kunnen er meerdere grensparen per kleur zijn.
+    for ondergrens, bovengrens in KLEURGRENZEN[kleurnaam]:
+        deelmasker = cv2.inRange(hsv_afbeelding, ondergrens, bovengrens)
+        masker_totaal = cv2.bitwise_or(masker_totaal, deelmasker)
+
+    return masker_totaal
+
+
+def herken_dominante_kleur(bgr_afbeelding, zoekmasker=None):
+    """
+    Bepaalt welke gedefinieerde kleur het meest voorkomt in de afbeelding.
+
+    :param bgr_afbeelding: originele afbeelding in BGR (output van cv2.imread)
+    :param zoekmasker: optioneel binair masker (uint8, 0/255) dat aangeeft
+        binnen welk gebied gezocht mag worden (bv. alleen het koekje,
+        zonder achtergrond). Als dit meegegeven wordt, worden pixels
+        buiten dit gebied volledig genegeerd bij het tellen.
+    :return: tuple (kleurnaam: str of None, masker: np.ndarray of None)
+    """
+    hsv = cv2.cvtColor(bgr_afbeelding, cv2.COLOR_BGR2HSV)
+
+    beste_kleur = None
+    beste_masker = None
+    grootste_aantal_pixels = 0
+
+    for kleurnaam in KLEURGRENZEN:
+        masker = bepaal_kleurmasker(hsv, kleurnaam)
+
+        if zoekmasker is not None:
+            masker = cv2.bitwise_and(masker, zoekmasker)
+
+        aantal_pixels = cv2.countNonZero(masker)
+
+        if aantal_pixels > grootste_aantal_pixels:
+            grootste_aantal_pixels = aantal_pixels
+            beste_kleur = kleurnaam
+            beste_masker = masker
+
+    return beste_kleur, beste_masker
